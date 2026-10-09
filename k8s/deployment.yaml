@@ -25,6 +25,9 @@ spec:
         app: ann-mnist-api
 
     spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+        
       containers:
         - name: ann-mnist-api
 
@@ -55,3 +58,4 @@ spec:
               port: 8000
             initialDelaySeconds: 15
             periodSeconds: 10
+      
