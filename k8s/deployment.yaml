@@ -28,7 +28,7 @@ spec:
       containers:
         - name: ann-mnist-api
 
-          image: ghcr.io/pkai21/ann-mnist-dev:sha-ed903d946766171a2beb529387d1d405fa39bfdf
+          image: ghcr.io/pkai21/ann-mnist-dev:sha-3f76e89bbf8094080aa52edea96c36ad133eab3f
 
           imagePullPolicy: Always
 
