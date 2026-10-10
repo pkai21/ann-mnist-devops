@@ -1,0 +1,65 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ann-mnist-alerts
+  namespace: monitoring
+  labels:
+    # Bắt buộc: khớp ruleSelector mặc định của kube-prometheus-stack
+    release: monitoring
+spec:
+  groups:
+    - name: ann-mnist-hpa
+      rules:
+        # Số pod đã >= 66% mức tối đa nhưng chưa chạm trần
+        - alert: AnnMnistHPANearMax
+          expr: |
+            (
+              kube_horizontalpodautoscaler_status_current_replicas{namespace="ann-mnist", horizontalpodautoscaler="ann-mnist-api"}
+              /
+              kube_horizontalpodautoscaler_spec_max_replicas{namespace="ann-mnist", horizontalpodautoscaler="ann-mnist-api"}
+            ) >= 0.66
+            and
+            kube_horizontalpodautoscaler_status_current_replicas{namespace="ann-mnist", horizontalpodautoscaler="ann-mnist-api"}
+            <
+            kube_horizontalpodautoscaler_spec_max_replicas{namespace="ann-mnist", horizontalpodautoscaler="ann-mnist-api"}
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ANN-MNIST HPA sắp chạm số pod tối đa"
+            description: "HPA ann-mnist-api đang chạy {{ $value | humanizePercentage }} số pod tối đa."
+
+        # Đã chạm trần và HPA vẫn muốn scale thêm (ScalingLimited=true)
+        - alert: AnnMnistHPAMaxReplicas
+          expr: |
+            kube_horizontalpodautoscaler_status_current_replicas{namespace="ann-mnist", horizontalpodautoscaler="ann-mnist-api"}
+            >=
+            kube_horizontalpodautoscaler_spec_max_replicas{namespace="ann-mnist", horizontalpodautoscaler="ann-mnist-api"}
+            and on (namespace, horizontalpodautoscaler)
+            kube_horizontalpodautoscaler_status_condition{namespace="ann-mnist", horizontalpodautoscaler="ann-mnist-api", condition="ScalingLimited", status="true"} == 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "ANN-MNIST HPA đã chạm số pod tối đa"
+            description: "HPA ann-mnist-api đã đạt maxReplicas và Kubernetes báo ScalingLimited=True, không thể scale thêm."
+
+    - name: ann-mnist-cpu
+      rules:
+        # CPU thực dùng / CPU request của toàn bộ pod API
+        # Dùng "sum by (namespace)" để GIỮ label namespace cho route Alertmanager
+        - alert: AnnMnistCPUHigh
+          expr: |
+            sum by (namespace) (
+              rate(container_cpu_usage_seconds_total{namespace="ann-mnist", pod=~"ann-mnist-api-.*", container="ann-mnist-api"}[5m])
+            )
+            /
+            sum by (namespace) (
+              kube_pod_container_resource_requests{namespace="ann-mnist", pod=~"ann-mnist-api-.*", container="ann-mnist-api", resource="cpu"}
+            ) > 0.9
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ANN-MNIST CPU vượt mức"
+            description: "CPU trung bình dùng {{ $value | humanizePercentage }} so với request, vượt 90% trong 5 phút."

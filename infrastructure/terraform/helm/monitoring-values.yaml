@@ -10,6 +10,11 @@ prometheus:
 
 alertmanager:
   enabled: true
+  alertmanagerSpec:
+    # Tắt việc Operator tự chèn matcher namespace="monitoring" vào route.
+    # Nếu không, alert của namespace ann-mnist sẽ không bao giờ khớp route.
+    alertmanagerConfigMatcherStrategy:
+      type: None
 
 nodeExporter:
   enabled: true

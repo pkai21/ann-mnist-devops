@@ -1,0 +1,37 @@
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: ann-mnist-telegram
+  namespace: monitoring
+spec:
+  route:
+    receiver: telegram
+    groupBy: [alertname, namespace]
+    groupWait: 10s
+    groupInterval: 1m
+    repeatInterval: 30m
+    matchers:
+      - name: alertname
+        matchType: "=~"
+        value: "AnnMnist.*"
+      - name: namespace
+        matchType: "="
+        value: "ann-mnist"
+
+  receivers:
+    - name: telegram
+      telegramConfigs:
+        - botToken:
+            # Secret phải nằm cùng namespace "monitoring" với AlertmanagerConfig
+            name: telegram-bot-secret
+            key: bot-token
+          chatID: 7353573023
+          sendResolved: true
+          parseMode: HTML
+          message: |
+            {{ if eq .Status "firing" }}🚨 <b>ANN-MNIST ALERT</b>{{ else }}✅ <b>ANN-MNIST RECOVERED</b>{{ end }}
+            {{ range .Alerts }}
+            <b>Alert:</b> {{ .Labels.alertname }}
+            <b>Severity:</b> {{ .Labels.severity }}
+            <b>Details:</b> {{ .Annotations.description }}
+            {{ end }}
