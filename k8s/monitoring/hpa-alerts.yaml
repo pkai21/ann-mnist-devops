@@ -1,0 +1,95 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ann-mnist-hpa-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: ann-mnist-hpa
+      rules:
+        - alert: AnnMnistHPANearMax
+          expr: |
+            kube_horizontalpodautoscaler_status_current_replicas{
+              namespace="ann-mnist",
+              horizontalpodautoscaler="ann-mnist-api"
+            } >= 4
+            and
+            kube_horizontalpodautoscaler_status_current_replicas{
+              namespace="ann-mnist",
+              horizontalpodautoscaler="ann-mnist-api"
+            } <
+            kube_horizontalpodautoscaler_spec_max_replicas{
+              namespace="ann-mnist",
+              horizontalpodautoscaler="ann-mnist-api"
+            }
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ANN-MNIST HPA is approaching its replica limit"
+            description: "HPA ann-mnist-api has at least 4 replicas and is below its maximum of 6."
+
+        - alert: AnnMnistHPAMaxReplicas
+          expr: |
+            kube_horizontalpodautoscaler_status_current_replicas{
+              namespace="ann-mnist",
+              horizontalpodautoscaler="ann-mnist-api"
+            }
+            >=
+            kube_horizontalpodautoscaler_spec_max_replicas{
+              namespace="ann-mnist",
+              horizontalpodautoscaler="ann-mnist-api"
+            }
+            and
+            kube_horizontalpodautoscaler_status_condition{
+              namespace="ann-mnist",
+              horizontalpodautoscaler="ann-mnist-api",
+              condition="ScalingLimited",
+              status="true"
+            } == 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "ANN-MNIST HPA has reached its maximum"
+            description: "HPA ann-mnist-api has reached 6 replicas and Kubernetes reports ScalingLimited=True."
+
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: ann-mnist-telegram
+  namespace: monitoring
+spec:
+  route:
+    receiver: telegram
+    groupBy:
+      - alertname
+      - namespace
+    groupWait: 10s
+    groupInterval: 1m
+    repeatInterval: 30m
+    matchers:
+      - name: alertname
+        matchType: "=~"
+        value: "AnnMnistHPANearMax|AnnMnistHPAMaxReplicas"
+
+  receivers:
+    - name: telegram
+      telegramConfigs:
+        - botToken:
+            name: telegram-bot-secret
+            key: bot-token
+          chatID: 7353573023
+          sendResolved: true
+          parseMode: HTML
+          message: |
+            {{ if eq .Status "firing" }}🚨 <b>ANN-MNIST HPA ALERT</b>{{ else }}✅ <b>ANN-MNIST HPA RECOVERED</b>{{ end }}
+            {{ range .Alerts }}
+            <b>Alert:</b> {{ .Labels.alertname }}
+            <b>Severity:</b> {{ .Labels.severity }}
+            <b>Namespace:</b> {{ .Labels.namespace }}
+            <b>Details:</b> {{ .Annotations.description }}
+            {{ end }}

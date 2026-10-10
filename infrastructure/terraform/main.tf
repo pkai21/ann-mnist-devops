@@ -16,7 +16,7 @@ resource "helm_release" "kube_prometheus_stack" {
     file("${path.module}/helm/monitoring-values.yaml")
   ]
 
-  # set_sensitive: Terraform ẩn giá trị này khỏi log plan/apply
+  # Giữ mật khẩu Grafana ở dạng sensitive
   set_sensitive {
     name  = "grafana.adminPassword"
     value = var.grafana_admin_password
@@ -44,13 +44,22 @@ resource "helm_release" "argocd" {
   ]
 }
 
+# Đọc hai Application YAML từ Git repository.
 locals {
-  # Đọc Application từ argocd/application.yaml để chỉ có 1 nguồn sự thật duy nhất
-  argocd_app = yamldecode(file("${path.module}/../../argocd/application.yaml"))
+  argocd_apps = {
+    ann_mnist = yamldecode(
+      file("${path.module}/../../argocd/application.yaml")
+    )
+
+    ann_mnist_monitoring = yamldecode(
+      file("${path.module}/../../argocd/application-monitoring.yaml")
+    )
+  }
 }
 
-# Dùng chart argocd-apps thay vì kubernetes_manifest, vì kubernetes_manifest
-# cần CRD tồn tại ngay lúc plan, mà CRD chỉ có sau khi Argo CD được cài.
+# Quản lý các Application thông qua chart argocd-apps.
+# Tránh dùng kubernetes_manifest vì CRD Application cần tồn tại
+# trong cluster trước khi Terraform thực hiện plan.
 resource "helm_release" "argocd_apps" {
   name       = "argocd-apps"
   namespace  = kubernetes_namespace.argocd.metadata[0].name
@@ -60,16 +69,19 @@ resource "helm_release" "argocd_apps" {
   values = [
     yamlencode({
       applications = {
-        (local.argocd_app.metadata.name) = {
-          namespace   = local.argocd_app.metadata.namespace
-          project     = local.argocd_app.spec.project
-          source      = local.argocd_app.spec.source
-          destination = local.argocd_app.spec.destination
-          syncPolicy  = local.argocd_app.spec.syncPolicy
+        for app_key, app in local.argocd_apps :
+        app.metadata.name => {
+          namespace   = app.metadata.namespace
+          project     = app.spec.project
+          source      = app.spec.source
+          destination = app.spec.destination
+          syncPolicy  = app.spec.syncPolicy
         }
       }
     })
   ]
 
-  depends_on = [helm_release.argocd]
+  depends_on = [
+    helm_release.argocd
+  ]
 }
