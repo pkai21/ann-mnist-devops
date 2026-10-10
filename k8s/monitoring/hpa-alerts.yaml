@@ -1,8 +1,8 @@
-apiVersion: monitoring.coreos.com/v1
-kind: PrometheusRule
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
 metadata:
-  name: ann-mnist-hpa-alerts
-  namespace: monitoring
+  name: ann-mnist-telegram
+  namespace: ann-mnist
   labels:
     release: monitoring
 spec:
@@ -63,6 +63,8 @@ metadata:
   name: ann-mnist-telegram
   namespace: monitoring
 spec:
+  alertmanagerConfigMatcherStrategy:
+    type: None
   route:
     receiver: telegram
     groupBy:
