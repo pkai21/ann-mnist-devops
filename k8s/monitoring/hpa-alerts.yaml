@@ -75,6 +75,9 @@ spec:
       - name: alertname
         matchType: "=~"
         value: "AnnMnistHPANearMax|AnnMnistHPAMaxReplicas"
+      - name: namespace
+        matchType: "="
+        value: "ann-mnist"
 
   receivers:
     - name: telegram
