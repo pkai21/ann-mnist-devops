@@ -61,7 +61,7 @@ locals {
 # Tránh dùng kubernetes_manifest vì CRD Application cần tồn tại
 # trong cluster trước khi Terraform thực hiện plan.
 resource "helm_release" "argocd_apps" {
-  name       = "argocd-apps"
+  name       = "argocd-apps-ann-mnist"
   namespace  = kubernetes_namespace.argocd.metadata[0].name
   repository = "https://argoproj.github.io/argo-helm"
   chart      = "argocd-apps"
