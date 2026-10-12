@@ -1,8 +1,8 @@
 name: Infrastructure
 
 on:
-  push:
-    branches: [main]
+  # push:
+  #   branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -60,4 +60,4 @@ jobs:
 
       # Lần chạy đầu: để dòng này bị comment, đọc plan rồi mới bật (xem mục 4)
       - name: Terraform Apply
-        run: terraform apply -auto-approve -input=false
+        run: terraform apply -auto-approve -input=false -replace=helm_release.argocd_apps
