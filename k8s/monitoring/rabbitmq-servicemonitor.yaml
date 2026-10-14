@@ -1,0 +1,37 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+
+metadata:
+  name: rabbitmq
+  namespace: monitoring
+  labels:
+    # Bắt buộc: khớp selector mặc định của kube-prometheus-stack
+    # (giống label trên PrometheusRule hiện có)
+    release: monitoring
+
+spec:
+  # ServiceMonitor nằm ở namespace monitoring nhưng Service ở ann-mnist
+  namespaceSelector:
+    matchNames:
+      - ann-mnist
+
+  selector:
+    matchLabels:
+      app: rabbitmq
+
+  endpoints:
+    # Số liệu tổng quát của node (RAM, kết nối...)
+    - port: metrics
+      path: /metrics
+      interval: 15s
+
+    # Số liệu TỪNG QUEUE (rabbitmq_detailed_queue_messages_ready...).
+    # Đây là số liệu KEDA và predict_linear cần ở Bước 3-4.
+    # Endpoint /metrics thường chỉ trả số tổng gộp, KHÔNG có số theo queue.
+    # interval 15s để thấy xu hướng đủ mịn cho predict_linear.
+    - port: metrics
+      path: /metrics/detailed
+      params:
+        family:
+          - queue_coarse_metrics
+      interval: 15s

@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: StatefulSet
+
+metadata:
+  name: rabbitmq
+  namespace: ann-mnist
+
+spec:
+  serviceName: rabbitmq
+
+  # Chỉ 1 bản: server đơn, không chạy cluster RabbitMQ.
+  # Đổi lại, RabbitMQ chết thì queue tạm ngưng (xem phần rủi ro bên dưới).
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: rabbitmq
+
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:4.1-management
+
+          ports:
+            - name: amqp
+              containerPort: 5672
+            - name: management
+              containerPort: 15672
+            - name: metrics
+              containerPort: 15692
+
+          env:
+            # Lấy user/password từ Secret, không viết thẳng vào Git
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: username
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: password
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              # RabbitMQ tự đọc giới hạn này để tính ngưỡng báo động RAM
+              memory: 1Gi
+
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/rabbitmq
+            # Chỉ mount đúng 1 file (subPath) để không đè cả thư mục /etc/rabbitmq
+            - name: config
+              mountPath: /etc/rabbitmq/enabled_plugins
+              subPath: enabled_plugins
+              readOnly: true
+
+          # Readiness nhẹ (chỉ thử mở cổng) để pod nhận traffic sớm nhất có thể
+          readinessProbe:
+            tcpSocket:
+              port: 5672
+            initialDelaySeconds: 20
+            periodSeconds: 10
+
+          # Liveness dùng lệnh ping của RabbitMQ; lệnh này khởi động một
+          # tiến trình Erlang nên khá nặng: chạy thưa (30s) và timeout dài (15s)
+          # để tránh bị kill oan khi server đang bận.
+          livenessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "ping"]
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 15
+
+      volumes:
+        - name: config
+          configMap:
+            name: rabbitmq-config
+
+  # Mỗi pod tự xin 1 ổ đĩa riêng; ổ này sống sót qua việc pod restart
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

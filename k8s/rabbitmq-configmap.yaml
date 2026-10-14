@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+
+metadata:
+  name: rabbitmq-config
+  namespace: ann-mnist
+
+data:
+  # Bật management (giao diện web) và prometheus (xuất metrics).
+  # Dấu chấm cuối dòng là cú pháp bắt buộc của Erlang, thiếu sẽ lỗi khởi động.
+  enabled_plugins: |
+    [rabbitmq_management,rabbitmq_prometheus].

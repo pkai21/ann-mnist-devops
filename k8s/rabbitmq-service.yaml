@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: rabbitmq
+  namespace: ann-mnist
+  labels:
+    # ServiceMonitor tìm Service qua label này
+    app: rabbitmq
+
+spec:
+  # ClusterIP: chỉ truy cập được từ bên trong cluster.
+  # Không mở NodePort ra ngoài vì giao diện quản trị RabbitMQ
+  # không nên lộ ra mạng; khi cần xem thì dùng port-forward.
+  type: ClusterIP
+
+  selector:
+    app: rabbitmq
+
+  ports:
+    - name: amqp        # cổng API/worker kết nối vào
+      port: 5672
+      targetPort: 5672
+    - name: management  # giao diện web quản trị
+      port: 15672
+      targetPort: 15672
+    - name: metrics     # Prometheus đọc số liệu ở đây
+      port: 15692
+      targetPort: 15692
