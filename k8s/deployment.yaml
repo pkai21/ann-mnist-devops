@@ -1,5 +1,4 @@
 apiVersion: apps/v1
-
 kind: Deployment
 
 metadata:
@@ -29,16 +28,33 @@ spec:
       containers:
         - name: ann-mnist-api
 
-          image: ghcr.io/pkai21/ann-mnist-dev:sha-3f76e89bbf8094080aa52edea96c36ad133eab3f
-
+          image: ghcr.io/pkai21/ann-mnist-dev:latest
           imagePullPolicy: Always
 
+          env:
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: username
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: password
+            - name: REDIS_HOST
+              value: redis
+
+          # API không còn nạp torch nên cần ít RAM hơn trước (trước là limit 1Gi).
+          # cpu request giữ 100m vì HPA của API tính % theo con số này.
           resources:
             requests:
               cpu: 100m
-              memory: 256Mi
+              memory: 128Mi
             limits:
-              memory: 1Gi
+              memory: 256Mi
 
           ports:
             - containerPort: 8000
@@ -56,4 +72,92 @@ spec:
               port: 8000
             initialDelaySeconds: 15
             periodSeconds: 10
-      
+
+---
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: ann-mnist-worker
+  namespace: ann-mnist
+
+spec:
+  # Bước 3 (KEDA) sẽ quản lý số bản; lúc đó phải bỏ dòng này (xem Bước 3)
+  replicas: 2
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+
+  selector:
+    matchLabels:
+      app: ann-mnist-worker
+
+  template:
+    metadata:
+      labels:
+        # Khác label của API nên Service của API không gửi traffic vào worker
+        app: ann-mnist-worker
+
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+
+      containers:
+        - name: ann-mnist-worker
+
+          # PHẢI cùng tên image với API: lệnh sed trong cd.yml đổi tag
+          # của mọi dòng "image: ghcr.io/pkai21/ann-mnist-dev:..." trong file này
+          image: ghcr.io/pkai21/ann-mnist-dev:latest
+
+          imagePullPolicy: Always
+
+          # Dùng chung image với API, chỉ khác lệnh khởi động
+          command: ["python", "-m", "src.worker"]
+
+          env:
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: username
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: password
+            - name: REDIS_HOST
+              value: redis
+
+          # Giữ limit 1Gi như bản cũ vì chưa đo RAM thật của worker.
+          # Sau khi chạy ổn, đo bằng: kubectl top pod -n ann-mnist
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+
+          # Worker không có HTTP nên dùng file làm tín hiệu.
+          # Sẵn sàng: worker đã kết nối RabbitMQ và bắt đầu nhận job
+          readinessProbe:
+            exec:
+              command: ["test", "-f", "/tmp/worker_ready"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+          # Còn sống: worker cập nhật file heartbeat mỗi giây.
+          # File cũ hơn 2 phút nghĩa là worker bị treo, Kubernetes sẽ khởi động lại.
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - find /tmp/worker_heartbeat -mmin -2 | grep -q .
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 5

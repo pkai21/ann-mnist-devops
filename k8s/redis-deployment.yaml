@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: redis
+  namespace: ann-mnist
+
+spec:
+  replicas: 1
+
+  # Recreate: tắt pod cũ rồi mới bật pod mới.
+  # Redis không lưu đĩa nên không có lý do để hai pod chạy chồng nhau.
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: redis
+
+  template:
+    metadata:
+      labels:
+        app: redis
+
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+
+          # --save "" và --appendonly no: tắt hoàn toàn việc ghi đĩa.
+          # --maxmemory 128mb: trần RAM của Redis, thấp hơn limit của pod
+          #   để Redis tự dọn dữ liệu trước khi bị Kubernetes kill (OOM).
+          # --maxmemory-policy volatile-lru: khi đầy thì xoá key có TTL ít dùng nhất.
+          args:
+            - "--save"
+            - ""
+            - "--appendonly"
+            - "no"
+            - "--maxmemory"
+            - "128mb"
+            - "--maxmemory-policy"
+            - "volatile-lru"
+
+          ports:
+            - containerPort: 6379
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
+
+          readinessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 3
+            periodSeconds: 5
+
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 15
+            periodSeconds: 10
