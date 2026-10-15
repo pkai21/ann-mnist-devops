@@ -1,0 +1,52 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+
+metadata:
+  name: ann-mnist-worker
+  namespace: ann-mnist
+
+spec:
+  scaleTargetRef:
+    # Deployment cần điều khiển (cùng namespace với ScaledObject)
+    name: ann-mnist-worker
+
+  minReplicaCount: 2
+  maxReplicaCount: 6
+
+  # KEDA hỏi Prometheus mỗi 15 giây
+  pollingInterval: 15
+
+  # Hỏi Prometheus lỗi 3 lần liên tiếp thì giữ cứng 4 pod
+  # thay vì "mù" và giữ nguyên số pod hiện tại
+  fallback:
+    failureThreshold: 3
+    replicas: 4
+
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          # 0 = scale lên ngay, không chờ ổn định
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Pods
+              value: 4
+              periodSeconds: 15
+        scaleDown:
+          # Pod mới tốn 3 phút để lên, nên giảm thật chậm để tránh lên xuống liên tục
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
+
+  triggers:
+    - type: prometheus
+      # AverageValue: số pod = tổng message chờ / threshold
+      metricType: AverageValue
+      metadata:
+        serverAddress: http://monitoring-kube-prometheus-prometheus.monitoring.svc:9090
+        query: sum(rabbitmq_detailed_queue_messages_ready{queue="predict_jobs", namespace="ann-mnist"})
+        threshold: "300"
+        # Queue rỗng có thể khiến Prometheus không trả series nào; coi như 0 thay vì báo lỗi
+        ignoreNullValues: "true"

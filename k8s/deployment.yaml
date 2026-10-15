@@ -82,8 +82,6 @@ metadata:
   namespace: ann-mnist
 
 spec:
-  # Bước 3 (KEDA) sẽ quản lý số bản; lúc đó phải bỏ dòng này (xem Bước 3)
-  replicas: 2
 
   strategy:
     type: RollingUpdate
