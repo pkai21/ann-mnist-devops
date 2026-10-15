@@ -28,7 +28,7 @@ spec:
       containers:
         - name: ann-mnist-api
 
-          image: ghcr.io/pkai21/ann-mnist-dev:sha-2ffd9179cfc214d71b0a0ef32ea6ad422c56a919
+          image: ghcr.io/pkai21/ann-mnist-dev:sha-a4daf70dccab944346092f5a1747eec6542161c9
           imagePullPolicy: Always
 
           env:
@@ -109,8 +109,8 @@ spec:
         - name: ann-mnist-worker
 
           # PHẢI cùng tên image với API: lệnh sed trong cd.yml đổi tag
-          # của mọi dòng "image: ghcr.io/pkai21/ann-mnist-dev:sha-2ffd9179cfc214d71b0a0ef32ea6ad422c56a919 trong file này
-          image: ghcr.io/pkai21/ann-mnist-dev:sha-2ffd9179cfc214d71b0a0ef32ea6ad422c56a919
+          # của mọi dòng "image: ghcr.io/pkai21/ann-mnist-dev:sha-a4daf70dccab944346092f5a1747eec6542161c9 trong file này
+          image: ghcr.io/pkai21/ann-mnist-dev:sha-a4daf70dccab944346092f5a1747eec6542161c9
 
           imagePullPolicy: Always
 
