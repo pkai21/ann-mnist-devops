@@ -13,9 +13,6 @@ spec:
   minReplicaCount: 2
   maxReplicaCount: 6
 
-  # KEDA hỏi Prometheus mỗi 15 giây
-  pollingInterval: 15
-
   # Hỏi Prometheus lỗi 3 lần liên tiếp thì giữ cứng 4 pod
   # thay vì "mù" và giữ nguyên số pod hiện tại
   fallback:
@@ -33,7 +30,8 @@ spec:
               value: 4
               periodSeconds: 15
         scaleDown:
-          # Pod mới tốn 3 phút để lên, nên giảm thật chậm để tránh lên xuống liên tục
+          # Giảm thật chậm: dự đoán xu hướng có thể báo động giả,
+          # và pod vừa tắt thì phải khởi động lại nếu tải quay về
           stabilizationWindowSeconds: 300
           policies:
             - type: Pods
@@ -41,12 +39,26 @@ spec:
               periodSeconds: 60
 
   triggers:
+    # Trigger 1: độ sâu queue HIỆN TẠI, lưới an toàn cuối cùng.
+    # 5000 = QUEUE_MAX_LENGTH (30.000) / maxReplicaCount (6):
+    # queue thật sự đầy thì ra đúng 6 pod.
     - type: prometheus
-      # AverageValue: số pod = tổng message chờ / threshold
       metricType: AverageValue
       metadata:
         serverAddress: http://monitoring-kube-prometheus-prometheus.monitoring.svc:9090
         query: sum(rabbitmq_detailed_queue_messages_ready{queue="predict_jobs", namespace="ann-mnist"})
-        threshold: "300"
-        # Queue rỗng có thể khiến Prometheus không trả series nào; coi như 0 thay vì báo lỗi
+        threshold: "5000"
+        ignoreNullValues: "true"
+
+    # Trigger 2: độ sâu queue DỰ ĐOÁN sau 180 giây theo xu hướng 2 phút gần nhất.
+    # Dự đoán chạm 30.000 (đầy) thì ra đúng 6 pod, ngay từ lúc đó chứ không đợi đầy thật.
+    # clamp_min(..., 0): queue đang giảm có thể cho dự đoán âm, ép về 0.
+    # CẢNH BÁO: [2m] cần ít nhất 4 mẫu, ServiceMonitor đang lấy mẫu mỗi 15s (8 mẫu).
+    # Nếu đổi interval của ServiceMonitor RabbitMQ thì phải đổi lại [2m].
+    - type: prometheus
+      metricType: AverageValue
+      metadata:
+        serverAddress: http://monitoring-kube-prometheus-prometheus.monitoring.svc:9090
+        query: clamp_min(sum(predict_linear(rabbitmq_detailed_queue_messages_ready{queue="predict_jobs", namespace="ann-mnist"}[2m], 180)), 0)
+        threshold: "5000"
         ignoreNullValues: "true"
