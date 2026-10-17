@@ -130,10 +130,6 @@ spec:
                   key: password
             - name: REDIS_HOST
               value: redis
-            # Chỉ dùng khi kiểm thử autoscaling: mỗi job chờ thêm 20ms (~47 job/giây/pod).
-            # Kiểm thử xong thì xoá 2 dòng này.
-            - name: SIMULATED_JOB_DELAY_MS
-              value: "20"
 
           # Giữ limit 1Gi như bản cũ vì chưa đo RAM thật của worker.
           # Sau khi chạy ổn, đo bằng: kubectl top pod -n ann-mnist

@@ -382,6 +382,116 @@ grafana:
                       type: __expr__
                       uid: __expr__
 
+        # ===== Nhóm phụ thuộc: RabbitMQ và Redis =====
+        - orgId: 1
+          name: ann-mnist-dependencies
+          folder: ANN-MNIST
+          interval: 30s
+          rules:
+            # RabbitMQ không còn pod sẵn sàng. for: 2m vì pod restart bình thường mất ~1 phút
+            # (readiness chờ 20s), chỉ báo khi chết lâu hơn mức đó.
+            - uid: ann-mnist-rabbitmq-down
+              title: AnnMnistRabbitmqDown
+              condition: C
+              for: 2m
+              noDataState: OK
+              execErrState: Error
+              labels:
+                severity: critical
+                app: ann-mnist
+              annotations:
+                summary: "ANN-MNIST: RabbitMQ không hoạt động"
+                description: "StatefulSet rabbitmq không có pod nào sẵn sàng. API trả 503 cho mọi job mới. Job đã lưu đĩa không mất."
+              data:
+                - refId: A
+                  relativeTimeRange:
+                    from: 300
+                    to: 0
+                  datasourceUid: prometheus
+                  model:
+                    refId: A
+                    editorMode: code
+                    # bool: trả 1 khi chết, 0 khi sống (không bool thì khi sống kết quả rỗng)
+                    expr: >-
+                      kube_statefulset_status_replicas_ready{namespace="ann-mnist", statefulset="rabbitmq"} < bool 1
+                    instant: true
+                    range: false
+                - refId: B
+                  datasourceUid: __expr__
+                  model:
+                    refId: B
+                    type: reduce
+                    expression: A
+                    reducer: last
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+                - refId: C
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    conditions:
+                      - evaluator:
+                          type: gt
+                          params:
+                            - 0
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+
+            # Redis không còn pod sẵn sàng: client nhận 503 khi gửi job và khi đọc kết quả
+            - uid: ann-mnist-redis-down
+              title: AnnMnistRedisDown
+              condition: C
+              for: 2m
+              noDataState: OK
+              execErrState: Error
+              labels:
+                severity: critical
+                app: ann-mnist
+              annotations:
+                summary: "ANN-MNIST: Redis không hoạt động"
+                description: "Deployment redis không có pod nào sẵn sàng. API không ghi được trạng thái job, worker không lưu được kết quả."
+              data:
+                - refId: A
+                  relativeTimeRange:
+                    from: 300
+                    to: 0
+                  datasourceUid: prometheus
+                  model:
+                    refId: A
+                    editorMode: code
+                    expr: >-
+                      kube_deployment_status_replicas_available{namespace="ann-mnist", deployment="redis"} < bool 1
+                    instant: true
+                    range: false
+                - refId: B
+                  datasourceUid: __expr__
+                  model:
+                    refId: B
+                    type: reduce
+                    expression: A
+                    reducer: last
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+                - refId: C
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    conditions:
+                      - evaluator:
+                          type: gt
+                          params:
+                            - 0
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+
 prometheus:
   enabled: true
 
