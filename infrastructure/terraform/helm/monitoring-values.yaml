@@ -5,6 +5,383 @@ grafana:
     type: NodePort
     nodePort: 30300
 
+  # Đưa token bot vào biến môi trường của pod Grafana, lấy từ Secret có sẵn.
+  # Token không nằm trong Git; file cấu hình bên dưới chỉ ghi TÊN biến.
+  envValueFrom:
+    TELEGRAM_BOT_TOKEN:
+      secretKeyRef:
+        name: telegram-bot-secret
+        key: bot-token
+
+  # CẢNH BÁO: Helm xử lý khối này như template nên TUYỆT ĐỐI không viết
+  # hai dấu ngoặc nhọn liền nhau trong nội dung. Vì vậy các tin nhắn dùng mẫu
+  # mặc định của Grafana, các annotation là chữ tĩnh.
+  alerting:
+    # --- 1. Báo tới đâu ---
+    contactpoints.yaml:
+      apiVersion: 1
+      contactPoints:
+        - orgId: 1
+          name: telegram-ann-mnist
+          receivers:
+            - uid: telegram-ann-mnist
+              type: telegram
+              settings:
+                # Grafana tự thay $TELEGRAM_BOT_TOKEN bằng giá trị biến môi trường
+                bottoken: $TELEGRAM_BOT_TOKEN
+                chatid: "7353573023"
+              # false = có gửi tin "đã hết lỗi" khi cảnh báo kết thúc
+              disableResolveMessage: false
+
+    # --- 2. Báo thế nào (chính sách gốc: mọi cảnh báo đều tới Telegram) ---
+    policies.yaml:
+      apiVersion: 1
+      policies:
+        - orgId: 1
+          receiver: telegram-ann-mnist
+          group_by:
+            - alertname
+          group_wait: 10s
+          group_interval: 1m
+          repeat_interval: 30m
+
+    # --- 3. Khi nào thì báo ---
+    rules.yaml:
+      apiVersion: 1
+      groups:
+        # ===== Nhóm queue (3 rule mới) =====
+        - orgId: 1
+          name: ann-mnist-queue
+          folder: ANN-MNIST
+          interval: 30s
+          rules:
+            # Rule 1: theo xu hướng, 3 phút nữa queue sẽ đầy
+            - uid: ann-mnist-queue-predicted-full
+              title: AnnMnistQueuePredictedFull
+              condition: C
+              for: 30s
+              noDataState: OK
+              execErrState: Error
+              labels:
+                severity: warning
+                app: ann-mnist
+              annotations:
+                summary: "ANN-MNIST: theo xu hướng, queue sẽ đầy trong 3 phút"
+                description: "Độ sâu dự đoán sau 3 phút vượt 30.000 (trần queue). KEDA đang tự tăng worker, cảnh báo này chỉ để biết. Chỉ cần can thiệp nếu kèm cảnh báo worker đã chạm trần."
+              data:
+                - refId: A
+                  relativeTimeRange:
+                    from: 300
+                    to: 0
+                  datasourceUid: prometheus
+                  model:
+                    refId: A
+                    editorMode: code
+                    # Cùng công thức với trigger 2 của KEDA (Bước 4), nên báo và scale luôn khớp nhau
+                    expr: >-
+                      clamp_min(sum(predict_linear(rabbitmq_detailed_queue_messages_ready{queue="predict_jobs", namespace="ann-mnist"}[2m], 180)), 0)
+                    instant: true
+                    range: false
+                - refId: B
+                  datasourceUid: __expr__
+                  model:
+                    refId: B
+                    type: reduce
+                    expression: A
+                    reducer: last
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+                - refId: C
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    conditions:
+                      - evaluator:
+                          type: gt
+                          params:
+                            - 30000
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+
+            # Rule 2: queue thật sự sắp đầy (80% của QUEUE_MAX_LENGTH = 30.000)
+            # Nếu đổi QUEUE_MAX_LENGTH trong config.py thì phải đổi lại 24000 và 30000 ở các rule
+            - uid: ann-mnist-queue-near-full
+              title: AnnMnistQueueNearFull
+              condition: C
+              for: 30s
+              noDataState: OK
+              execErrState: Error
+              labels:
+                severity: critical
+                app: ann-mnist
+              annotations:
+                summary: "ANN-MNIST: queue đã đạt 80% sức chứa"
+                description: "Độ sâu thật vượt 24.000 trên trần 30.000. Đầy hẳn thì API trả 503 cho client mới."
+              data:
+                - refId: A
+                  relativeTimeRange:
+                    from: 300
+                    to: 0
+                  datasourceUid: prometheus
+                  model:
+                    refId: A
+                    editorMode: code
+                    expr: >-
+                      sum(rabbitmq_detailed_queue_messages_ready{queue="predict_jobs", namespace="ann-mnist"})
+                    instant: true
+                    range: false
+                - refId: B
+                  datasourceUid: __expr__
+                  model:
+                    refId: B
+                    type: reduce
+                    expression: A
+                    reducer: last
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+                - refId: C
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    conditions:
+                      - evaluator:
+                          type: gt
+                          params:
+                            - 24000
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+
+            # Rule 3: worker đã chạm 6 pod mà queue vẫn sắp đầy, hết đường tự scale, cần người xử lý.
+            # Chỉ kêu khi CẢ HAI vế đúng. Vế "chạm trần pod" chặn báo động sai khi dự đoán phóng đại
+            # (Bước 4 đo được dự đoán 44.000 trong khi đỉnh thật 14.000).
+            - uid: ann-mnist-worker-maxed
+              title: AnnMnistWorkerMaxedQueueGrowing
+              condition: C
+              for: 30s
+              noDataState: OK
+              execErrState: Error
+              labels:
+                severity: critical
+                app: ann-mnist
+              annotations:
+                summary: "ANN-MNIST: worker đã chạm số pod tối đa mà queue vẫn sắp đầy"
+                description: "KEDA không thể tăng thêm. Cần tăng maxReplicaCount, kiểm tra tài nguyên server, hoặc giới hạn tải vào."
+              data:
+                - refId: A
+                  relativeTimeRange:
+                    from: 300
+                    to: 0
+                  datasourceUid: prometheus
+                  model:
+                    refId: A
+                    editorMode: code
+                    expr: >-
+                      (sum(predict_linear(rabbitmq_detailed_queue_messages_ready{queue="predict_jobs", namespace="ann-mnist"}[2m], 180)) > 30000)
+                      and
+                      (max(kube_horizontalpodautoscaler_status_current_replicas{namespace="ann-mnist", horizontalpodautoscaler="keda-hpa-ann-mnist-worker"})
+                      >= max(kube_horizontalpodautoscaler_spec_max_replicas{namespace="ann-mnist", horizontalpodautoscaler="keda-hpa-ann-mnist-worker"}))
+                    instant: true
+                    range: false
+                - refId: B
+                  datasourceUid: __expr__
+                  model:
+                    refId: B
+                    type: reduce
+                    expression: A
+                    reducer: last
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+                - refId: C
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    conditions:
+                      - evaluator:
+                          type: gt
+                          params:
+                            - 0
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+
+        # ===== Nhóm API (chuyển 3 rule cũ từ PrometheusRule sang) =====
+        - orgId: 1
+          name: ann-mnist-api
+          folder: ANN-MNIST
+          interval: 30s
+          rules:
+            # Số pod API đã >= 66% mức tối đa nhưng chưa chạm trần
+            - uid: ann-mnist-api-hpa-near-max
+              title: AnnMnistApiHpaNearMax
+              condition: C
+              for: 2m
+              noDataState: OK
+              execErrState: Error
+              labels:
+                severity: warning
+                app: ann-mnist
+              annotations:
+                summary: "ANN-MNIST: HPA của API sắp chạm số pod tối đa"
+                description: "HPA ann-mnist-api đang chạy từ 66% số pod tối đa trở lên."
+              data:
+                - refId: A
+                  relativeTimeRange:
+                    from: 300
+                    to: 0
+                  datasourceUid: prometheus
+                  model:
+                    refId: A
+                    editorMode: code
+                    expr: >-
+                      (kube_horizontalpodautoscaler_status_current_replicas{namespace="ann-mnist", horizontalpodautoscaler="ann-mnist-api"}
+                      / kube_horizontalpodautoscaler_spec_max_replicas{namespace="ann-mnist", horizontalpodautoscaler="ann-mnist-api"}) >= 0.66
+                      and
+                      kube_horizontalpodautoscaler_status_current_replicas{namespace="ann-mnist", horizontalpodautoscaler="ann-mnist-api"}
+                      < kube_horizontalpodautoscaler_spec_max_replicas{namespace="ann-mnist", horizontalpodautoscaler="ann-mnist-api"}
+                    instant: true
+                    range: false
+                - refId: B
+                  datasourceUid: __expr__
+                  model:
+                    refId: B
+                    type: reduce
+                    expression: A
+                    reducer: last
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+                - refId: C
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    conditions:
+                      - evaluator:
+                          type: gt
+                          params:
+                            - 0
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+
+            # API đã chạm trần pod và HPA vẫn muốn scale thêm (ScalingLimited=true)
+            - uid: ann-mnist-api-hpa-max
+              title: AnnMnistApiHpaMaxReplicas
+              condition: C
+              for: 1m
+              noDataState: OK
+              execErrState: Error
+              labels:
+                severity: critical
+                app: ann-mnist
+              annotations:
+                summary: "ANN-MNIST: HPA của API đã chạm số pod tối đa"
+                description: "HPA ann-mnist-api đạt maxReplicas và Kubernetes báo ScalingLimited=True, không thể scale thêm."
+              data:
+                - refId: A
+                  relativeTimeRange:
+                    from: 300
+                    to: 0
+                  datasourceUid: prometheus
+                  model:
+                    refId: A
+                    editorMode: code
+                    expr: >-
+                      kube_horizontalpodautoscaler_status_current_replicas{namespace="ann-mnist", horizontalpodautoscaler="ann-mnist-api"}
+                      >= kube_horizontalpodautoscaler_spec_max_replicas{namespace="ann-mnist", horizontalpodautoscaler="ann-mnist-api"}
+                      and on (namespace, horizontalpodautoscaler)
+                      kube_horizontalpodautoscaler_status_condition{namespace="ann-mnist", horizontalpodautoscaler="ann-mnist-api", condition="ScalingLimited", status="true"} == 1
+                    instant: true
+                    range: false
+                - refId: B
+                  datasourceUid: __expr__
+                  model:
+                    refId: B
+                    type: reduce
+                    expression: A
+                    reducer: last
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+                - refId: C
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    conditions:
+                      - evaluator:
+                          type: gt
+                          params:
+                            - 0
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+
+            # CPU thực dùng / CPU request của toàn bộ pod API vượt 90% trong 5 phút
+            - uid: ann-mnist-api-cpu-high
+              title: AnnMnistApiCpuHigh
+              condition: C
+              for: 5m
+              noDataState: OK
+              execErrState: Error
+              labels:
+                severity: warning
+                app: ann-mnist
+              annotations:
+                summary: "ANN-MNIST: CPU của API vượt mức"
+                description: "CPU dùng của các pod API vượt 90% so với request trong 5 phút."
+              data:
+                - refId: A
+                  relativeTimeRange:
+                    from: 300
+                    to: 0
+                  datasourceUid: prometheus
+                  model:
+                    refId: A
+                    editorMode: code
+                    expr: >-
+                      sum(rate(container_cpu_usage_seconds_total{namespace="ann-mnist", pod=~"ann-mnist-api-.*", container="ann-mnist-api"}[5m]))
+                      / sum(kube_pod_container_resource_requests{namespace="ann-mnist", pod=~"ann-mnist-api-.*", container="ann-mnist-api", resource="cpu"})
+                    instant: true
+                    range: false
+                - refId: B
+                  datasourceUid: __expr__
+                  model:
+                    refId: B
+                    type: reduce
+                    expression: A
+                    reducer: last
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+                - refId: C
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    conditions:
+                      - evaluator:
+                          type: gt
+                          params:
+                            - 0.9
+                    datasource:
+                      type: __expr__
+                      uid: __expr__
+
 prometheus:
   enabled: true
 
