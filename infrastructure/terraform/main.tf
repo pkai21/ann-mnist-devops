@@ -85,3 +85,24 @@ resource "helm_release" "argocd_apps" {
     helm_release.argocd
   ]
 }
+
+# KEDA đã được cài bằng Helm từ trước (chart 2.21.0, không có values tuỳ chỉnh).
+# Khai báo ở đây để Git quản lý. Workflow Infrastructure sẽ import bản đang chạy
+# trước khi plan, nên Terraform KHÔNG cài lại.
+resource "kubernetes_namespace" "keda" {
+  metadata {
+    name = "keda"
+  }
+}
+
+resource "helm_release" "keda" {
+  name       = "keda"
+  namespace  = kubernetes_namespace.keda.metadata[0].name
+  repository = "https://kedacore.github.io/charts"
+  chart      = "keda"
+  version    = "2.21.0"
+
+  depends_on = [
+    kubernetes_namespace.keda
+  ]
+}
